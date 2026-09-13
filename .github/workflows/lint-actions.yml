@@ -1,0 +1,100 @@
+name: 'Lint Actions'
+
+on:
+  workflow_call:
+    inputs:
+      actionlint-version:
+        description: 'actionlint release to run.'
+        required: false
+        type: string
+        default: '1.7.7'
+      action-paths:
+        description: 'Space-separated globs pointing at composite action metadata files.'
+        required: false
+        type: string
+        default: 'action.yml action.yaml actions/*/action.yml .github/actions/*/action.yml'
+      shellcheck:
+        description: 'Run shellcheck on every composite action run block.'
+        required: false
+        type: boolean
+        default: true
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: 'actionlint and shellcheck'
+    runs-on: ${{ inputs.runs-on }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Validate composite action metadata'
+        shell: bash
+        env:
+          ACTION_PATHS: ${{ inputs.action-paths }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          found=0
+          # Word splitting on $ACTION_PATHS is intentional: it is a glob list.
+          # shellcheck disable=SC2086
+          for file in $ACTION_PATHS; do
+            yq eval 'true' "$file" > /dev/null
+            echo "$file is valid YAML"
+            found=1
+          done
+
+          [ "$found" -eq 1 ] || echo "::notice::No composite action metadata found."
+
+      - name: 'Run actionlint'
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
+        run: |
+          set -euo pipefail
+
+          curl -fsSL --retry 3 --retry-all-errors \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+      - name: 'Shellcheck composite action scripts'
+        if: inputs.shellcheck
+        shell: bash
+        env:
+          ACTION_PATHS: ${{ inputs.action-paths }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          status=0
+          # Word splitting on $ACTION_PATHS is intentional: it is a glob list.
+          # shellcheck disable=SC2086
+          for file in $ACTION_PATHS; do
+            count="$(yq eval '.runs.steps | length' "$file")"
+            for i in $(seq 0 $((count - 1))); do
+              script="$(yq eval ".runs.steps[$i].run // \"\"" "$file")"
+              [ -n "$script" ] || continue
+
+              name="$(yq eval ".runs.steps[$i].name // \"step $i\"" "$file")"
+              echo "==> $file: $name"
+
+              # GitHub expressions are substituted before the script runs;
+              # neutralise them so shellcheck sees valid shell.
+              printf '#!/usr/bin/env bash\n%s\n' \
+                "$(printf '%s' "$script" | sed -E 's/\$\{\{[^}]*\}\}/EXPRESSION/g')" \
+                > "$RUNNER_TEMP/step.sh"
+
+              shellcheck "$RUNNER_TEMP/step.sh" || status=1
+            done
+          done
+
+          exit $status
