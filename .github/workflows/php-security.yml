@@ -1,0 +1,92 @@
+name: 'Security'
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: 'PHP version to run on.'
+        required: false
+        type: string
+        default: '8.4'
+      php-extensions:
+        description: 'Comma-separated list of PHP extensions to install.'
+        required: false
+        type: string
+        default: ''
+      dependency-versions:
+        description: 'Which dependencies to install: highest, lowest or locked.'
+        required: false
+        type: string
+        default: 'highest'
+      composer-options:
+        description: 'Extra options appended to the Composer command.'
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: 'Directory holding composer.json.'
+        required: false
+        type: string
+        default: '.'
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      composer-validate:
+        description: 'Run composer validate --strict.'
+        required: false
+        type: boolean
+        default: true
+      no-check-lock:
+        description: 'Add --no-check-lock to composer validate, for packages that do not commit a lock file.'
+        required: false
+        type: boolean
+        default: false
+      audit-args:
+        description: 'Arguments passed to composer audit.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: 'Security audit (PHP ${{ inputs.php-version }})'
+    runs-on: ${{ inputs.runs-on }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Setup PHP and install dependencies'
+        uses: IQ2i/.github/actions/setup-php@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          dependency-versions: ${{ inputs.dependency-versions }}
+          composer-options: ${{ inputs.composer-options }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: 'Validate composer.json'
+        if: inputs.composer-validate
+        env:
+          NO_CHECK_LOCK: ${{ inputs.no-check-lock && '--no-check-lock' || '' }}
+        run: |
+          set -euo pipefail
+          # Word splitting on $NO_CHECK_LOCK is intentional: it is an optional flag.
+          # shellcheck disable=SC2086
+          composer validate --strict $NO_CHECK_LOCK
+
+      - name: 'Audit dependencies'
+        env:
+          ARGS: ${{ inputs.audit-args }}
+        run: |
+          set -euo pipefail
+          # Word splitting on $ARGS is intentional: it is an argument list.
+          # shellcheck disable=SC2086
+          composer audit --no-interaction $ARGS

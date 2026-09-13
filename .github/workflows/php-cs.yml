@@ -1,0 +1,88 @@
+name: 'PHP-CS-Fixer'
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: 'PHP version to run on.'
+        required: false
+        type: string
+        default: '8.4'
+      php-extensions:
+        description: 'Comma-separated list of PHP extensions to install.'
+        required: false
+        type: string
+        default: ''
+      dependency-versions:
+        description: 'Which dependencies to install: highest, lowest or locked.'
+        required: false
+        type: string
+        default: 'highest'
+      composer-options:
+        description: 'Extra options appended to the Composer command.'
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: 'Directory holding composer.json.'
+        required: false
+        type: string
+        default: '.'
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      args:
+        description: 'Arguments passed to php-cs-fixer.'
+        required: false
+        type: string
+        default: 'fix --dry-run --diff --no-ansi'
+      ignore-env:
+        description: 'Set PHP_CS_FIXER_IGNORE_ENV, to run on a PHP version the config does not support yet.'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  php-cs-fixer:
+    name: 'Coding standard (PHP ${{ inputs.php-version }})'
+    runs-on: ${{ inputs.runs-on }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Setup PHP and install dependencies'
+        uses: IQ2i/.github/actions/setup-php@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          dependency-versions: ${{ inputs.dependency-versions }}
+          composer-options: ${{ inputs.composer-options }}
+          working-directory: ${{ inputs.working-directory }}
+          tools: composer:v2, php-cs-fixer
+
+      - name: 'Run PHP-CS-Fixer'
+        env:
+          PHP_CS_FIXER_IGNORE_ENV: ${{ inputs.ignore-env && '1' || '' }}
+          ARGS: ${{ inputs.args }}
+        run: |
+          set -euo pipefail
+
+          # Prefer the project pin; fall back to the globally installed tool.
+          if [ -x vendor/bin/php-cs-fixer ]; then
+            BIN=vendor/bin/php-cs-fixer
+          else
+            BIN=php-cs-fixer
+          fi
+
+          "$BIN" --version
+          # Word splitting on $ARGS is intentional: it is an argument list.
+          # shellcheck disable=SC2086
+          "$BIN" $ARGS

@@ -1,0 +1,128 @@
+name: 'PHPUnit'
+
+on:
+  workflow_call:
+    inputs:
+      php-versions:
+        description: 'JSON array of PHP versions to test against, e.g. ''["8.3", "8.4"]''.'
+        required: false
+        type: string
+        default: '["8.4"]'
+      php-extensions:
+        description: 'Comma-separated list of PHP extensions to install.'
+        required: false
+        type: string
+        default: ''
+      dependency-versions:
+        description: 'Which dependencies to install: highest, lowest or locked.'
+        required: false
+        type: string
+        default: 'highest'
+      composer-options:
+        description: 'Extra options appended to the Composer command.'
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: 'Directory holding composer.json.'
+        required: false
+        type: string
+        default: '.'
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      args:
+        description: 'Arguments passed to phpunit.'
+        required: false
+        type: string
+        default: ''
+      coverage:
+        description: 'Coverage driver: none, pcov or xdebug.'
+        required: false
+        type: string
+        default: 'none'
+      coverage-floor:
+        description: 'Minimum line coverage percentage to enforce. 0 disables the check and requires a coverage driver.'
+        required: false
+        type: number
+        default: 0
+      fail-fast:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  phpunit:
+    name: 'Tests (PHP ${{ matrix.php-version }})'
+    runs-on: ${{ inputs.runs-on }}
+    strategy:
+      fail-fast: ${{ inputs.fail-fast }}
+      matrix:
+        php-version: ${{ fromJson(inputs.php-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Reject a coverage floor without a coverage driver'
+        if: inputs.coverage-floor > 0 && inputs.coverage == 'none'
+        run: |
+          echo "::error::coverage-floor is set but coverage is 'none'. Set coverage to pcov or xdebug."
+          exit 1
+
+      - name: 'Setup PHP and install dependencies'
+        uses: IQ2i/.github/actions/setup-php@main
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          coverage: ${{ inputs.coverage }}
+          dependency-versions: ${{ inputs.dependency-versions }}
+          composer-options: ${{ inputs.composer-options }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-suffix: ${{ matrix.php-version }}
+          tools: composer:v2, phpunit
+
+      - name: 'Run PHPUnit'
+        env:
+          ARGS: ${{ inputs.args }}
+          COVERAGE_ARGS: ${{ inputs.coverage-floor > 0 && '--coverage-clover=clover.xml' || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ -x vendor/bin/phpunit ]; then
+            BIN=vendor/bin/phpunit
+          else
+            BIN=phpunit
+          fi
+
+          "$BIN" --version
+          # Word splitting on $ARGS and $COVERAGE_ARGS is intentional: they are argument lists.
+          # shellcheck disable=SC2086
+          "$BIN" $ARGS $COVERAGE_ARGS
+
+      # PHPUnit has no "fail below X%" option: read the clover totals instead.
+      # Raise the floor only to a number the suite already reaches.
+      - name: 'Enforce the coverage floor'
+        if: inputs.coverage-floor > 0
+        env:
+          COVERAGE_FLOOR: ${{ inputs.coverage-floor }}
+        run: |
+          set -euo pipefail
+          # The PHP snippet is single-quoted on purpose: its $variables are PHP, not shell.
+          # shellcheck disable=SC2016
+          php -r '
+          $xml = simplexml_load_file("clover.xml");
+          $metrics = $xml->project->metrics;
+          $statements = (float) $metrics["statements"];
+          $percentage = $statements > 0 ? (float) $metrics["coveredstatements"] / $statements * 100 : 0.0;
+          $floor = (float) getenv("COVERAGE_FLOOR");
+          printf("Line coverage: %.2f%% (floor: %.2f%%)\n", $percentage, $floor);
+          exit($percentage < $floor ? 1 : 0);
+          '

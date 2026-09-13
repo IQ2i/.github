@@ -1,0 +1,87 @@
+name: 'PHPStan'
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: 'PHP version to run on.'
+        required: false
+        type: string
+        default: '8.4'
+      php-extensions:
+        description: 'Comma-separated list of PHP extensions to install.'
+        required: false
+        type: string
+        default: ''
+      dependency-versions:
+        description: 'Which dependencies to install: highest, lowest or locked.'
+        required: false
+        type: string
+        default: 'highest'
+      composer-options:
+        description: 'Extra options appended to the Composer command.'
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: 'Directory holding composer.json.'
+        required: false
+        type: string
+        default: '.'
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      args:
+        description: 'Arguments passed to phpstan.'
+        required: false
+        type: string
+        default: 'analyse --no-progress'
+      memory-limit:
+        description: 'Memory limit given to PHPStan.'
+        required: false
+        type: string
+        default: '-1'
+
+permissions:
+  contents: read
+
+jobs:
+  phpstan:
+    name: 'Static analysis (PHP ${{ inputs.php-version }}, ${{ inputs.dependency-versions }} deps)'
+    runs-on: ${{ inputs.runs-on }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Setup PHP and install dependencies'
+        uses: IQ2i/.github/actions/setup-php@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          dependency-versions: ${{ inputs.dependency-versions }}
+          composer-options: ${{ inputs.composer-options }}
+          working-directory: ${{ inputs.working-directory }}
+          tools: composer:v2, phpstan
+
+      - name: 'Run PHPStan'
+        env:
+          ARGS: ${{ inputs.args }}
+          MEMORY_LIMIT: ${{ inputs.memory-limit }}
+        run: |
+          set -euo pipefail
+
+          if [ -x vendor/bin/phpstan ]; then
+            BIN=vendor/bin/phpstan
+          else
+            BIN=phpstan
+          fi
+
+          "$BIN" --version
+          # Word splitting on $ARGS is intentional: it is an argument list.
+          # shellcheck disable=SC2086
+          "$BIN" $ARGS --memory-limit="$MEMORY_LIMIT"
