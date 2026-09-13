@@ -1,0 +1,116 @@
+name: 'Bundle CI'
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        description: >-
+          JSON array of combinations. Each entry accepts: php (required), symfony,
+          stability, dependency-versions, pin-packages, name.
+        required: false
+        type: string
+        default: '[{"php": "8.4"}]'
+      php-extensions:
+        description: 'Comma-separated list of PHP extensions to install.'
+        required: false
+        type: string
+        default: ''
+      args:
+        description: 'Arguments passed to phpunit.'
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: 'Directory holding composer.json.'
+        required: false
+        type: string
+        default: '.'
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      fail-fast:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  phpunit:
+    name: ${{ matrix.name || format('PHP {0}, Symfony {1}', matrix.php, matrix.symfony || 'default') }}
+    runs-on: ${{ inputs.runs-on }}
+    strategy:
+      fail-fast: ${{ inputs.fail-fast }}
+      matrix:
+        include: ${{ fromJson(inputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Setup PHP ${{ matrix.php }}'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ${{ inputs.php-extensions }}
+          coverage: none
+          tools: composer:v2
+
+      # symfony/flex resolves extra.symfony.require, which is what pins the Symfony version.
+      - name: 'Install symfony/flex'
+        if: matrix.symfony
+        run: |
+          composer global config --no-plugins allow-plugins.symfony/flex true
+          composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
+      - name: 'Configure Composer'
+        env:
+          SYMFONY_VERSION: ${{ matrix.symfony }}
+          STABILITY: ${{ matrix.stability || 'stable' }}
+          PIN_PACKAGES: ${{ matrix.pin-packages }}
+        run: |
+          set -euo pipefail
+
+          composer config minimum-stability "$STABILITY"
+
+          if [ -n "$SYMFONY_VERSION" ]; then
+            composer config extra.symfony.require "$SYMFONY_VERSION"
+          fi
+
+          if [ -n "$PIN_PACKAGES" ]; then
+            # Word splitting on $PIN_PACKAGES is intentional: it is a package list.
+            # shellcheck disable=SC2086
+            composer require --no-update --no-progress $PIN_PACKAGES
+          fi
+
+      - name: 'Install dependencies'
+        uses: IQ2i/.github/actions/setup-php@main
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ${{ inputs.php-extensions }}
+          install-php: 'false'
+          dependency-versions: ${{ matrix.dependency-versions || 'highest' }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-suffix: ${{ matrix.php }}-${{ matrix.symfony }}-${{ matrix.dependency-versions }}
+
+      - name: 'Run PHPUnit'
+        env:
+          ARGS: ${{ inputs.args }}
+        run: |
+          set -euo pipefail
+
+          if [ -x vendor/bin/phpunit ]; then
+            BIN=vendor/bin/phpunit
+          else
+            BIN=phpunit
+          fi
+
+          "$BIN" --version
+          # Word splitting on $ARGS is intentional: it is an argument list.
+          # shellcheck disable=SC2086
+          "$BIN" $ARGS
