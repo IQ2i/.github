@@ -1,0 +1,113 @@
+name: 'Setup PHP'
+description: 'Set up PHP, restore the Composer cache and install dependencies.'
+
+inputs:
+  php-version:
+    description: 'PHP version to set up.'
+    required: false
+    default: '8.4'
+  extensions:
+    description: 'Comma-separated list of PHP extensions to install.'
+    required: false
+    default: ''
+  ini-values:
+    description: 'Comma-separated list of php.ini directives.'
+    required: false
+    default: ''
+  coverage:
+    description: 'Coverage driver: none, pcov or xdebug.'
+    required: false
+    default: 'none'
+  tools:
+    description: 'Comma-separated list of tools to install globally.'
+    required: false
+    default: 'composer:v2'
+  dependency-versions:
+    description: 'Which dependencies to install: highest, lowest or locked.'
+    required: false
+    default: 'highest'
+  composer-options:
+    description: 'Extra options appended to the Composer command.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Directory holding composer.json.'
+    required: false
+    default: '.'
+  cache-suffix:
+    description: 'Extra discriminator for the Composer cache key.'
+    required: false
+    default: ''
+  install-php:
+    description: >-
+      Set to false when the caller already set PHP up itself and only needs the
+      Composer cache and install. Callers that must edit composer.json between
+      the PHP setup and the install do this.
+    required: false
+    default: 'true'
+
+outputs:
+  composer-cache-dir:
+    description: 'Resolved Composer cache directory.'
+    value: ${{ steps.composer.outputs.cache-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: 'Setup PHP ${{ inputs.php-version }}'
+      if: inputs.install-php == 'true'
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.extensions }}
+        ini-values: ${{ inputs.ini-values }}
+        coverage: ${{ inputs.coverage }}
+        tools: ${{ inputs.tools }}
+
+    - name: 'Resolve Composer cache directory'
+      id: composer
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: echo "cache-dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+    - name: 'Restore Composer cache'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.composer.outputs.cache-dir }}
+        key: composer-${{ runner.os }}-php${{ inputs.php-version }}-${{ inputs.dependency-versions }}-${{ inputs.cache-suffix }}-${{ hashFiles('**/composer.json', '**/composer.lock') }}
+        restore-keys: |
+          composer-${{ runner.os }}-php${{ inputs.php-version }}-${{ inputs.dependency-versions }}-${{ inputs.cache-suffix }}-
+          composer-${{ runner.os }}-php${{ inputs.php-version }}-
+
+    - name: 'Install Composer dependencies (${{ inputs.dependency-versions }})'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DEPENDENCY_VERSIONS: ${{ inputs.dependency-versions }}
+        COMPOSER_OPTIONS: ${{ inputs.composer-options }}
+      run: |
+        set -euo pipefail
+
+        # Word splitting on $COMPOSER_OPTIONS is intentional: callers pass a flag list.
+        # shellcheck disable=SC2086
+        case "$DEPENDENCY_VERSIONS" in
+          locked)
+            if [ -f composer.lock ]; then
+              composer install --no-interaction --no-progress --prefer-dist $COMPOSER_OPTIONS
+            else
+              # Bundles and libraries do not commit a lock file; install would abort there.
+              echo "::warning::No composer.lock found, falling back to 'composer update'."
+              composer update --no-interaction --no-progress --prefer-dist $COMPOSER_OPTIONS
+            fi
+            ;;
+          highest)
+            composer update --no-interaction --no-progress --prefer-dist $COMPOSER_OPTIONS
+            ;;
+          lowest)
+            composer update --no-interaction --no-progress --prefer-dist --prefer-lowest --prefer-stable $COMPOSER_OPTIONS
+            ;;
+          *)
+            echo "::error::Invalid dependency-versions '$DEPENDENCY_VERSIONS' (expected: highest, lowest or locked)."
+            exit 1
+            ;;
+        esac
