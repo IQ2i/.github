@@ -1,0 +1,30 @@
+name: Bug report
+description: Report something that does not work as documented.
+labels: [bug]
+
+body:
+  - type: input
+    id: workflow
+    attributes:
+      label: Workflow or action
+      description: Which reusable workflow or composite action is affected?
+      placeholder: .github/workflows/php-tests.yml
+    validations:
+      required: true
+
+  - type: textarea
+    id: caller
+    attributes:
+      label: Calling workflow
+      description: The job that calls it, with the inputs you pass.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      description: A link to a failing run helps a lot.
+    validations:
+      required: true

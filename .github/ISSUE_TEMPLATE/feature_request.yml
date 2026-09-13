@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest a new shared workflow, action or input.
+labels: [enhancement]
+
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Which repositories duplicate this today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The workflow or input you have in mind, and how you would call it.
+    validations:
+      required: true
