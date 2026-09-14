@@ -47,6 +47,10 @@ jobs:
           # Word splitting on $ACTION_PATHS is intentional: it is a glob list.
           # shellcheck disable=SC2086
           for file in $ACTION_PATHS; do
+            # nullglob only drops unmatched globs: literal paths survive even
+            # when the file does not exist.
+            [ -f "$file" ] || continue
+
             yq eval 'true' "$file" > /dev/null
             echo "$file is valid YAML"
             found=1
@@ -79,7 +83,9 @@ jobs:
           # Word splitting on $ACTION_PATHS is intentional: it is a glob list.
           # shellcheck disable=SC2086
           for file in $ACTION_PATHS; do
-            count="$(yq eval '.runs.steps | length' "$file")"
+            [ -f "$file" ] || continue
+
+            count="$(yq eval '.runs.steps // [] | length' "$file")"
             for i in $(seq 0 $((count - 1))); do
               script="$(yq eval ".runs.steps[$i].run // \"\"" "$file")"
               [ -n "$script" ] || continue
