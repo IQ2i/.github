@@ -2,9 +2,14 @@ version: 2
 
 updates:
   - package-ecosystem: github-actions
-    directories:
-      - /
-      - /actions/setup-php
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: github-actions
+    directory: /actions/setup-php
     schedule:
       interval: monthly
     commit-message:
