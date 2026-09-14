@@ -71,7 +71,7 @@ runs:
       run: echo "cache-dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
     - name: 'Restore Composer cache'
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ steps.composer.outputs.cache-dir }}
         key: composer-${{ runner.os }}-php${{ inputs.php-version }}-${{ inputs.dependency-versions }}-${{ inputs.cache-suffix }}-${{ hashFiles('**/composer.json', '**/composer.lock') }}
