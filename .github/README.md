@@ -87,6 +87,7 @@ the workflow, and lets a caller test another branch. Only what is specific to ea
 | `coverage` | `none` | `none`, `pcov` or `xdebug` |
 | `coverage-floor` | `0` | Minimum line coverage percentage; `0` disables. Requires a coverage driver |
 | `before-script` | — | Shell script run after the install and before PHPUnit, e.g. `bin/console tailwind:build` |
+| `mariadb-version` | — | Starts a MariaDB service (e.g. `11.4`) and exports `DATABASE_URL` (user `root`, database `app`) before the `before-script`. The test database is up to the caller, e.g. `doctrine:database:create --env=test` in `before-script` |
 | `fail-fast` | `false` | |
 
 ```yaml
