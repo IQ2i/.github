@@ -1,0 +1,37 @@
+name: 'Automerge'
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: 'Branch of the pull request to merge.'
+        required: false
+        type: string
+        default: 'chore/nightly-dependencies'
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: 'Merge ${{ inputs.branch }}'
+    # The dependency update dispatches the CI on its branch: that is the only run allowed to merge.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == inputs.branch
+    runs-on: ${{ inputs.runs-on }}
+
+    steps:
+      - name: 'Merge the pull request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # --match-head-commit refuses to merge anything but the commit the CI has just tested.
+          gh pr merge "$BRANCH" --repo "$REPOSITORY" --squash --delete-branch --match-head-commit "$HEAD_SHA"

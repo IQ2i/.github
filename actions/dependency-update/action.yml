@@ -1,0 +1,157 @@
+name: 'Dependency update'
+description: >-
+  Updates the dependencies of a Composer application and opens a pull request. The nightly mode only
+  touches the production dependencies within their constraints; the review mode gathers what needs
+  a human review.
+
+inputs:
+  mode:
+    description: >-
+      `nightly`: production dependencies within their constraints, meant to be merged automatically.
+      `review`: every dependency, the new minor versions of the packages pinned to patch releases (`~X.Y.Z`)
+      and the new major versions of the importmap, meant to be reviewed.
+    required: true
+  branch:
+    description: 'Branch of the pull request. Defaults to chore/nightly-dependencies or chore/dependencies-review.'
+    required: false
+    default: ''
+  base-branch:
+    description: 'Branch the pull request targets.'
+    required: false
+    default: 'main'
+  ci-workflow:
+    description: 'Workflow file dispatched on the branch, since a GITHUB_TOKEN push does not trigger the pull_request event.'
+    required: false
+    default: 'ci.yml'
+  working-directory:
+    description: 'Directory holding composer.json.'
+    required: false
+    default: '.'
+  github-token:
+    description: 'Token used to push the branch, open the pull request and dispatch the CI.'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 'Resolve the settings'
+      id: settings
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MODE: ${{ inputs.mode }}
+        BRANCH: ${{ inputs.branch }}
+      run: |
+        set -euo pipefail
+
+        case "$MODE" in
+          nightly) default_branch='chore/nightly-dependencies' ;;
+          review) default_branch='chore/dependencies-review' ;;
+          *)
+            echo "::error::Invalid mode '$MODE' (expected: nightly or review)."
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f composer.lock ]; then
+          echo "::error::No composer.lock found: this action is meant for applications, not for bundles or libraries."
+          exit 1
+        fi
+
+        echo "branch=${BRANCH:-$default_branch}" >> "$GITHUB_OUTPUT"
+
+    - name: 'Snapshot the locked versions'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: composer show --locked --format=json > "$RUNNER_TEMP/before.json"
+
+    - name: 'Update the Composer dependencies'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+
+        if [ "$MODE" = 'nightly' ]; then
+          packages=()
+          while read -r package; do
+            packages+=("$package")
+          done < <(jq -r '.require | keys[] | select(contains("/"))' composer.json)
+          composer update "${packages[@]}" --with-dependencies --no-interaction --no-progress
+        else
+          composer update --no-interaction --no-progress
+          "$GITHUB_ACTION_PATH/scripts/relax-pinned-minors.sh"
+        fi
+
+    - name: 'Update the importmap packages'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -f importmap.php ]; then
+          echo "::notice::No importmap.php found, skipping."
+          exit 0
+        fi
+
+        "$GITHUB_ACTION_PATH/scripts/update-importmap.sh" semver-safe-update
+        if [ "$MODE" = 'review' ]; then
+          "$GITHUB_ACTION_PATH/scripts/update-importmap.sh" update-possible
+        fi
+
+    - name: 'Publish the update'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MODE: ${{ inputs.mode }}
+        BRANCH: ${{ steps.settings.outputs.branch }}
+        BASE_BRANCH: ${{ inputs.base-branch }}
+        CI_WORKFLOW: ${{ inputs.ci-workflow }}
+      run: |
+        set -euo pipefail
+
+        if git diff --quiet; then
+          echo 'Everything is up to date.' >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        composer show --locked --format=json > "$RUNNER_TEMP/after.json"
+
+        if [ "$MODE" = 'nightly' ]; then
+          title='chore: Update dependencies'
+        else
+          title='chore: Update dependencies for review'
+        fi
+
+        {
+          if [ "$MODE" = 'nightly' ]; then
+            echo 'Nightly update of the production dependencies, merged automatically once the CI passes.'
+          else
+            echo 'Update to review: dev dependencies, new minor versions of the pinned packages and new importmap major versions.'
+            echo 'Check the changelogs before merging. This pull request is never merged automatically.'
+          fi
+          echo
+          "$GITHUB_ACTION_PATH/scripts/versions-diff.sh" "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json"
+          if [ -f importmap.php ] && ! git diff --quiet -- importmap.php; then
+            echo
+            echo '```diff'
+            git diff --unified=0 -- importmap.php
+            echo '```'
+          fi
+          if [ "$MODE" = 'review' ]; then
+            echo
+            echo '### Still outdated'
+            echo
+            echo 'Major versions of the Composer packages and new Symfony minors need a manual update.'
+            echo
+            echo '```'
+            composer outdated --direct --no-ansi || true
+            echo '```'
+          fi
+        } > "$RUNNER_TEMP/body.md"
+
+        "$GITHUB_ACTION_PATH/scripts/publish-update.sh" "$BRANCH" "$BASE_BRANCH" "$CI_WORKFLOW" "$title" "$title" "$RUNNER_TEMP/body.md"
