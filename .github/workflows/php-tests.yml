@@ -57,6 +57,11 @@ on:
         required: false
         type: number
         default: 0
+      mariadb-version:
+        description: 'MariaDB version to start as a service, e.g. 11.4. Empty starts no database. Exposes DATABASE_URL (root, database "app").'
+        required: false
+        type: string
+        default: ''
       fail-fast:
         required: false
         type: boolean
@@ -76,6 +81,20 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
+    services:
+      # An empty image skips the service: only callers that set mariadb-version get a database.
+      database:
+        image: ${{ inputs.mariadb-version != '' && format('mariadb:{0}', inputs.mariadb-version) || '' }}
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: app
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - name: 'Checkout repository'
@@ -100,6 +119,14 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           cache-suffix: ${{ matrix.php-version }}
           tools: composer:v2, phpunit
+
+      - name: 'Expose DATABASE_URL'
+        if: inputs.mariadb-version != ''
+        env:
+          MARIADB_VERSION: ${{ inputs.mariadb-version }}
+        run: |
+          set -euo pipefail
+          echo "DATABASE_URL=mysql://root:root@127.0.0.1:3306/app?serverVersion=${MARIADB_VERSION}.0-MariaDB&charset=utf8mb4" >> "$GITHUB_ENV"
 
       - name: 'Run before-script'
         if: inputs.before-script != ''
