@@ -199,6 +199,7 @@ workflows open a pull request from a dedicated branch and dispatch the CI on it:
 
 Pin the packages whose minor versions deserve a look (an API client, anything whose output is rendered as
 HTML) with `~X.Y.Z`: the nightly run only brings their patches, the weekly review proposes the new minors.
+A `~0.Y.Z` package is handled the same way, since Composer does not count 0.Y to 0.Z as a minor update.
 New major versions of the Composer packages are left to Dependabot.
 
 Dev dependencies are kept out of the automatic merge on purpose: a new php-cs-fixer ruleset turns the CI red
