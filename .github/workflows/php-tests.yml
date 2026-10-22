@@ -32,8 +32,18 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      ref:
+        description: 'Git ref to check out. Defaults to the ref that triggered the workflow.'
+        required: false
+        type: string
+        default: ''
       args:
         description: 'Arguments passed to phpunit.'
+        required: false
+        type: string
+        default: ''
+      before-script:
+        description: 'Shell script run after dependencies are installed and before PHPUnit, e.g. a frontend build.'
         required: false
         type: string
         default: ''
@@ -70,6 +80,8 @@ jobs:
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: 'Reject a coverage floor without a coverage driver'
         if: inputs.coverage-floor > 0 && inputs.coverage == 'none'
@@ -88,6 +100,14 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           cache-suffix: ${{ matrix.php-version }}
           tools: composer:v2, phpunit
+
+      - name: 'Run before-script'
+        if: inputs.before-script != ''
+        env:
+          BEFORE_SCRIPT: ${{ inputs.before-script }}
+        run: |
+          set -euo pipefail
+          bash -euo pipefail -c "$BEFORE_SCRIPT"
 
       - name: 'Run PHPUnit'
         env:
