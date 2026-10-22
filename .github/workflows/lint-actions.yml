@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: true
+      script-paths:
+        description: 'Space-separated globs pointing at the shell scripts shipped with composite actions.'
+        required: false
+        type: string
+        default: 'actions/*/scripts/*.sh .github/actions/*/scripts/*.sh'
       runs-on:
         required: false
         type: string
@@ -101,6 +106,27 @@ jobs:
 
               shellcheck "$RUNNER_TEMP/step.sh" || status=1
             done
+          done
+
+          exit $status
+
+      - name: 'Shellcheck composite action script files'
+        if: inputs.shellcheck
+        shell: bash
+        env:
+          SCRIPT_PATHS: ${{ inputs.script-paths }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          status=0
+          # Word splitting on $SCRIPT_PATHS is intentional: it is a glob list.
+          # shellcheck disable=SC2086
+          for file in $SCRIPT_PATHS; do
+            [ -f "$file" ] || continue
+
+            echo "==> $file"
+            shellcheck "$file" || status=1
           done
 
           exit $status
