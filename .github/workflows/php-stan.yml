@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      ref:
+        description: 'Git ref to check out. Defaults to the ref that triggered the workflow.'
+        required: false
+        type: string
+        default: ''
       args:
         description: 'Arguments passed to phpstan.'
         required: false
@@ -57,6 +62,8 @@ jobs:
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: 'Setup PHP and install dependencies'
         uses: IQ2i/.github/actions/setup-php@main

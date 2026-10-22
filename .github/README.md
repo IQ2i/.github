@@ -49,7 +49,9 @@ itself less than it is given, and concurrency is scoped to the calling workflow.
 ## Reusable workflows
 
 All of them accept `php-extensions`, `dependency-versions` (`highest` \| `lowest` \| `locked`),
-`composer-options`, `working-directory` and `runs-on`. Only what is specific to each is listed below.
+`composer-options`, `working-directory` and `runs-on`. The QA workflows (`php-cs`, `php-stan`, `php-security`,
+`php-tests`) and `symfony-app` also accept `ref`, the Git ref to check out: it defaults to the ref that triggered
+the workflow, and lets a caller test another branch. Only what is specific to each is listed below.
 
 ### `php-cs.yml` — coding standard
 
@@ -84,6 +86,7 @@ All of them accept `php-extensions`, `dependency-versions` (`highest` \| `lowest
 | `args` | — | Passed to phpunit |
 | `coverage` | `none` | `none`, `pcov` or `xdebug` |
 | `coverage-floor` | `0` | Minimum line coverage percentage; `0` disables. Requires a coverage driver |
+| `before-script` | — | Shell script run after the install and before PHPUnit, e.g. `bin/console tailwind:build` |
 | `fail-fast` | `false` | |
 
 ```yaml
@@ -97,6 +100,28 @@ All of them accept `php-extensions`, `dependency-versions` (`highest` \| `lowest
 
 There is no "fail below X%" option in PHPUnit, so the floor is enforced by reading the clover totals.
 Raise it only to a number the suite already reaches.
+
+### `symfony-app.yml` — Symfony application checks
+
+For applications rather than libraries: it checks what a dependency update can break without failing a
+unit test. Each step is skipped when the tool or the file it needs is missing.
+
+| Input | Default | |
+|---|---|---|
+| `php-version` | `8.4` | |
+| `dependency-versions` | `locked` | An application tests what it deploys, not the highest versions |
+| `before-script` | — | Shell script run after the install, e.g. `bin/console tailwind:build` |
+
+It runs `lint:container`, `lint:twig`, `lint:yaml`, `twig-cs-fixer`, `tailwind-cs-fixer` (the job fails when
+it would rewrite a template) and, when there is an `importmap.php`, `asset-map:compile` and `importmap:audit`.
+
+```yaml
+  app:
+    uses: IQ2i/.github/.github/workflows/symfony-app.yml@main
+    with:
+      php-version: '8.5'
+      before-script: bin/console tailwind:build
+```
 
 ### `bundle-ci.yml` — PHP × Symfony matrix
 
