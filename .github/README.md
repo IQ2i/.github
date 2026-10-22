@@ -153,12 +153,13 @@ and `name` (the label shown in the checks list; defaults to `PHP x, Symfony y`).
 ### `lint-actions.yml` — actionlint and shellcheck
 
 For repositories that publish a composite action. Validates the action metadata, runs `actionlint`, and
-shellchecks every `run:` block of every composite action.
+shellchecks every `run:` block of every composite action and the scripts shipped next to them.
 
 | Input | Default | |
 |---|---|---|
 | `actionlint-version` | `1.7.7` | |
 | `action-paths` | `action.yml action.yaml actions/*/action.yml .github/actions/*/action.yml` | Space-separated globs |
+| `script-paths` | `actions/*/scripts/*.sh .github/actions/*/scripts/*.sh` | Space-separated globs |
 | `shellcheck` | `true` | |
 
 ## Composite action
@@ -184,6 +185,105 @@ is no lock file, which is the normal case for a bundle).
 
 Set `install-php: 'false'` when the job already set PHP up and needs to edit `composer.json` before
 installing — that is what `bundle-ci.yml` does for symfony/flex.
+
+## Dependency updates
+
+For Composer **applications** (a `composer.lock` is required; bundles and libraries are not covered). Two
+workflows open a pull request from a dedicated branch and dispatch the CI on it:
+
+| Mode | Branch | Updates | Merge |
+|---|---|---|---|
+| `nightly` | `chore/nightly-dependencies` | The production dependencies (`require`) within their constraints, and the importmap packages that stay on the same major version | Automatic, once the CI has passed |
+| `review` | `chore/dependencies-review` | Everything else: dev dependencies, the new minor versions of the packages pinned to patch releases (`~X.Y.Z`) and the new importmap major versions | Never, a human reviews it |
+
+Pin the packages whose minor versions deserve a look (an API client, anything whose output is rendered as
+HTML) with `~X.Y.Z`: the nightly run only brings their patches, the weekly review proposes the new minors.
+New major versions of the Composer packages are left to Dependabot.
+
+Dev dependencies are kept out of the automatic merge on purpose: a new php-cs-fixer ruleset turns the CI red
+and needs a human, and they never reach production when the deployment runs `composer install --no-dev`.
+
+A `GITHUB_TOKEN` push cannot trigger the `pull_request` event, so the pull request is not what runs the CI:
+the update dispatches the CI workflow on its branch (`ci-workflow`, `ci.yml` by default), and the
+`automerge.yml` workflow, called from that same CI, merges the pull request when every job has passed. It
+refuses to run on anything but a `workflow_dispatch` on the update branch, and merges with
+`--match-head-commit`, so only the commit the CI has just tested can land.
+
+### Setting a repository up
+
+Enable *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*, then add
+three files.
+
+`.github/workflows/update-dependencies.yml`
+
+```yaml
+name: Update dependencies
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: update-dependencies
+
+jobs:
+  update:
+    uses: IQ2i/.github/.github/workflows/dependency-update.yml@main
+    with:
+      mode: nightly
+      php-version: '8.5'
+      php-extensions: gd, intl
+```
+
+`.github/workflows/dependencies-review.yml` is the same file with `mode: review`, another `group`, and a
+weekly `cron` (for example `'0 6 * * 1'`).
+
+In `.github/workflows/ci.yml`, add a last job. The permissions must be granted by the caller: without them the
+whole workflow is rejected, even on pull requests.
+
+```yaml
+  automerge:
+    needs: [security, cs, sa, tests]
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: IQ2i/.github/.github/workflows/automerge.yml@main
+```
+
+`dependency-update.yml` takes `mode`, `php-version`, `php-extensions`, `branch`, `base-branch`, `ci-workflow`,
+`working-directory` and `runs-on`; `automerge.yml` takes `branch` and `runs-on`. The CI workflow needs a
+`workflow_dispatch` trigger. For an application, call the QA workflows with `dependency-versions: locked` so the
+CI tests exactly what is deployed.
+
+A `dependabot.yml` for such an application only needs to cover what the workflows leave out:
+
+```yaml
+version: 2
+
+updates:
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-minor', 'version-update:semver-patch']
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+```
 
 ## What the other repositories inherit, and what they do not
 
