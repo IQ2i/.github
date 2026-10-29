@@ -64,7 +64,10 @@ runs:
     - name: 'Snapshot the locked versions'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: composer show --locked --format=json > "$RUNNER_TEMP/before.json"
+      run: |
+        composer show --locked --format=json > "$RUNNER_TEMP/before.json"
+        "$GITHUB_ACTION_PATH/scripts/locked-packages.sh" composer.lock > "$RUNNER_TEMP/before-locked.txt"
+        cp composer.json "$RUNNER_TEMP/before-composer.json"
 
     - name: 'Update the Composer dependencies'
       shell: bash
@@ -120,7 +123,12 @@ runs:
       run: |
         set -euo pipefail
 
-        if git diff --quiet; then
+        # A newer Composer rewrites the lock metadata (`published-time`, plugin API version) without any
+        # package change: such a diff is not worth a pull request.
+        "$GITHUB_ACTION_PATH/scripts/locked-packages.sh" composer.lock > "$RUNNER_TEMP/after-locked.txt"
+        if cmp --silent "$RUNNER_TEMP/before-locked.txt" "$RUNNER_TEMP/after-locked.txt" \
+          && cmp --silent "$RUNNER_TEMP/before-composer.json" composer.json \
+          && git diff --quiet -- . ':!composer.lock'; then
           echo 'Everything is up to date.' >> "$GITHUB_STEP_SUMMARY"
           exit 0
         fi
