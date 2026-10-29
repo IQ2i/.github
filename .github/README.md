@@ -190,11 +190,11 @@ installing — that is what `bundle-ci.yml` does for symfony/flex.
 ## Dependency updates
 
 For Composer **applications** (a `composer.lock` is required; bundles and libraries are not covered). Two
-workflows open a pull request from a dedicated branch and dispatch the CI on it:
+workflows open a pull request from a dedicated branch, and the CI runs on it like on any pull request:
 
 | Mode | Branch | Updates | Merge |
 |---|---|---|---|
-| `nightly` | `chore/nightly-dependencies` | The production dependencies (`require`) within their constraints, and the importmap packages that stay on the same major version | Automatic, once the CI has passed |
+| `nightly` | `chore/nightly-dependencies` | The production dependencies (`require`) within their constraints, the importmap packages that stay on the same major version, and any package with a security advisory, dev ones included | Automatic, once the CI has passed |
 | `review` | `chore/dependencies-review` | Everything else: dev dependencies, the new minor versions of the packages pinned to patch releases (`~X.Y.Z`) and the new importmap major versions | Never, a human reviews it |
 
 Pin the packages whose minor versions deserve a look (an API client, anything whose output is rendered as
@@ -203,18 +203,34 @@ A `~0.Y.Z` package is handled the same way, since Composer does not count 0.Y to
 New major versions of the Composer packages are left to Dependabot.
 
 Dev dependencies are kept out of the automatic merge on purpose: a new php-cs-fixer ruleset turns the CI red
-and needs a human, and they never reach production when the deployment runs `composer install --no-dev`.
+and needs a human, and they never reach production when the deployment runs `composer install --no-dev`. The
+exception is a dev dependency with a security advisory: it is patched within its constraints as soon as the
+nightly run sees it. The pull request lists the advisories it fixes and those no version within the
+constraints can fix (those need a manual update, or Dependabot).
 
-A `GITHUB_TOKEN` push cannot trigger the `pull_request` event, so the pull request is not what runs the CI:
-the update dispatches the CI workflow on its branch (`ci-workflow`, `ci.yml` by default), and the
-`automerge.yml` workflow, called from that same CI, merges the pull request when every job has passed. It
-refuses to run on anything but a `workflow_dispatch` on the update branch, and merges with
-`--match-head-commit`, so only the commit the CI has just tested can land.
+A dev-only advisory must not hold back the production updates, so the nightly pull request audits the
+production dependencies only (`audit-args: --no-dev` in the CI below). `main` and the review pull request keep
+the full audit and stay red until a human fixes it.
+
+### Why a GitHub App
+
+A push made with the `GITHUB_TOKEN` triggers no workflow, and the `pull_request` runs of a pull request it opens
+wait for a manual approval. The update therefore pushes the branch and opens the pull request with the token of
+a GitHub App, which makes the CI start on its own. The pull request is also assigned to someone: a bot's pull
+request notifies nobody else, and neither does its failed CI.
 
 ### Setting a repository up
 
-Enable *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*, then add
-three files.
+Create a GitHub App once, for every repository (*Settings → Developer settings → GitHub Apps*):
+
+- no webhook;
+- repository permissions: *Contents* and *Pull requests* read and write (*Metadata* read-only is implied);
+- installable by any account if it has to serve several owners, then installed on each of them, on the
+  repositories concerned.
+
+Generate a private key, and store the App's client ID and the private key as the secrets
+`DEPENDENCY_APP_CLIENT_ID` and `DEPENDENCY_APP_PRIVATE_KEY`: at the organization level for IQ2i, and in each
+repository for a personal account. Then add three files.
 
 `.github/workflows/update-dependencies.yml`
 
@@ -223,13 +239,11 @@ name: Update dependencies
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '23 */2 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+  contents: read
 
 concurrency:
   group: update-dependencies
@@ -241,27 +255,53 @@ jobs:
       mode: nightly
       php-version: '8.5'
       php-extensions: gd, intl
+      assignees: your-login
+    secrets:
+      app-client-id: ${{ secrets.DEPENDENCY_APP_CLIENT_ID }}
+      app-private-key: ${{ secrets.DEPENDENCY_APP_PRIVATE_KEY }}
 ```
 
 `.github/workflows/dependencies-review.yml` is the same file with `mode: review`, another `group`, and a
-weekly `cron` (for example `'0 6 * * 1'`).
+weekly `cron` (for example `'41 5 * * 1'`). Pick a minute off the top of the hour: GitHub delays the scheduled
+runs it receives at peak times.
 
-In `.github/workflows/ci.yml`, add a last job. The permissions must be granted by the caller: without them the
-whole workflow is rejected, even on pull requests.
+In `.github/workflows/ci.yml`, make the `security` job skip the dev dependencies on the nightly branch, and add
+two last jobs. The permissions must be granted by the caller: without them the whole workflow is rejected, even
+on pull requests.
 
 ```yaml
+  security:
+    uses: IQ2i/.github/.github/workflows/php-security.yml@main
+    with:
+      audit-args: ${{ github.head_ref == 'chore/nightly-dependencies' && '--no-dev' || '' }}
+
   automerge:
     needs: [security, cs, sa, tests]
     permissions:
       contents: write
       pull-requests: write
     uses: IQ2i/.github/.github/workflows/automerge.yml@main
+
+  automerge-report:
+    if: failure()
+    needs: [security, cs, sa, tests]
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: IQ2i/.github/.github/workflows/automerge.yml@main
+    with:
+      report-failure: true
 ```
 
-`dependency-update.yml` takes `mode`, `php-version`, `php-extensions`, `branch`, `base-branch`, `ci-workflow`,
-`working-directory` and `runs-on`; `automerge.yml` takes `branch` and `runs-on`. The CI workflow needs a
-`workflow_dispatch` trigger. For an application, call the QA workflows with `dependency-versions: locked` so the
-CI tests exactly what is deployed.
+`automerge` merges the pull request when every job has passed. It refuses to run on anything but a
+`pull_request` coming from the update branch of the same repository, and merges with `--match-head-commit`, so
+only the commit the CI has just tested can land. `automerge-report` runs when a job has failed and comments the
+pull request with the link of the run, which notifies its assignees.
+
+`dependency-update.yml` takes `mode`, `php-version`, `php-extensions`, `branch`, `base-branch`, `assignees`,
+`working-directory` and `runs-on`, plus the secrets `app-client-id` and `app-private-key`; `automerge.yml`
+takes `branch`, `report-failure` and `runs-on`. For an application, call the QA workflows with
+`dependency-versions: locked` so the CI tests exactly what is deployed.
 
 A `dependabot.yml` for such an application only needs to cover what the workflows leave out:
 

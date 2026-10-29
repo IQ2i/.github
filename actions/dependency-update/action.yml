@@ -1,13 +1,14 @@
 name: 'Dependency update'
 description: >-
-  Updates the dependencies of a Composer application and opens a pull request. The nightly mode only
-  touches the production dependencies within their constraints; the review mode gathers what needs
-  a human review.
+  Updates the dependencies of a Composer application and opens a pull request. The nightly mode touches
+  the production dependencies within their constraints, plus any vulnerable package; the review mode
+  gathers what needs a human review.
 
 inputs:
   mode:
     description: >-
-      `nightly`: production dependencies within their constraints, meant to be merged automatically.
+      `nightly`: production dependencies within their constraints and the vulnerable packages, dev included,
+      meant to be merged automatically.
       `review`: every dependency, the new minor versions of the packages pinned to patch releases (`~X.Y.Z`)
       and the new major versions of the importmap, meant to be reviewed.
     required: true
@@ -19,16 +20,16 @@ inputs:
     description: 'Branch the pull request targets.'
     required: false
     default: 'main'
-  ci-workflow:
-    description: 'Workflow file dispatched on the branch, since a GITHUB_TOKEN push does not trigger the pull_request event.'
+  assignees:
+    description: 'Comma-separated logins assigned to the pull request.'
     required: false
-    default: 'ci.yml'
+    default: ''
   working-directory:
     description: 'Directory holding composer.json.'
     required: false
     default: '.'
   github-token:
-    description: 'Token used to push the branch, open the pull request and dispatch the CI.'
+    description: 'Token used to push the branch and open the pull request. It must not be the GITHUB_TOKEN, whose pushes trigger no CI.'
     required: true
 
 runs:
@@ -84,6 +85,11 @@ runs:
           "$GITHUB_ACTION_PATH/scripts/relax-pinned-minors.sh"
         fi
 
+    - name: 'Fix the vulnerable packages'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: '"$GITHUB_ACTION_PATH/scripts/fix-vulnerabilities.sh" "$RUNNER_TEMP/security.md"'
+
     - name: 'Update the importmap packages'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -110,7 +116,7 @@ runs:
         MODE: ${{ inputs.mode }}
         BRANCH: ${{ steps.settings.outputs.branch }}
         BASE_BRANCH: ${{ inputs.base-branch }}
-        CI_WORKFLOW: ${{ inputs.ci-workflow }}
+        ASSIGNEES: ${{ inputs.assignees }}
       run: |
         set -euo pipefail
 
@@ -129,13 +135,17 @@ runs:
 
         {
           if [ "$MODE" = 'nightly' ]; then
-            echo 'Nightly update of the production dependencies, merged automatically once the CI passes.'
+            echo 'Nightly update of the production dependencies and of the vulnerable packages, merged automatically once the CI passes.'
           else
             echo 'Update to review: dev dependencies, new minor versions of the pinned packages and new importmap major versions.'
             echo 'Check the changelogs before merging. This pull request is never merged automatically.'
           fi
           echo
           "$GITHUB_ACTION_PATH/scripts/versions-diff.sh" "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json"
+          if [ -s "$RUNNER_TEMP/security.md" ]; then
+            echo
+            cat "$RUNNER_TEMP/security.md"
+          fi
           if [ -f importmap.php ] && ! git diff --quiet -- importmap.php; then
             echo
             echo '```diff'
@@ -154,4 +164,4 @@ runs:
           fi
         } > "$RUNNER_TEMP/body.md"
 
-        "$GITHUB_ACTION_PATH/scripts/publish-update.sh" "$BRANCH" "$BASE_BRANCH" "$CI_WORKFLOW" "$title" "$title" "$RUNNER_TEMP/body.md"
+        "$GITHUB_ACTION_PATH/scripts/publish-update.sh" "$BRANCH" "$BASE_BRANCH" "$title" "$title" "$RUNNER_TEMP/body.md" "$ASSIGNEES"

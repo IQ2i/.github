@@ -8,6 +8,13 @@ on:
         required: false
         type: string
         default: 'chore/nightly-dependencies'
+      report-failure:
+        description: >-
+          Comment the pull request instead of merging it. Meant for a job that runs when the CI has failed:
+          the comment notifies the assignees, who would otherwise never hear about a bot's pull request.
+        required: false
+        type: boolean
+        default: false
       runs-on:
         required: false
         type: string
@@ -20,8 +27,12 @@ permissions:
 jobs:
   automerge:
     name: 'Merge ${{ inputs.branch }}'
-    # The dependency update dispatches the CI on its branch: that is the only run allowed to merge.
-    if: github.event_name == 'workflow_dispatch' && github.ref_name == inputs.branch
+    # Only the pull request of the update branch, and never one coming from a fork.
+    if: >-
+      !inputs.report-failure
+      && github.event_name == 'pull_request'
+      && github.head_ref == inputs.branch
+      && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ inputs.runs-on }}
 
     steps:
@@ -30,8 +41,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           BRANCH: ${{ inputs.branch }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           # --match-head-commit refuses to merge anything but the commit the CI has just tested.
           gh pr merge "$BRANCH" --repo "$REPOSITORY" --squash --delete-branch --match-head-commit "$HEAD_SHA"
+
+  report:
+    name: 'Report the failure of ${{ inputs.branch }}'
+    if: >-
+      inputs.report-failure
+      && github.event_name == 'pull_request'
+      && github.head_ref == inputs.branch
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ inputs.runs-on }}
+
+    steps:
+      - name: 'Comment the pull request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh pr comment "$BRANCH" --repo "$REPOSITORY" --body "The CI failed, so this pull request was not merged: $RUN_URL"

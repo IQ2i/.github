@@ -1,0 +1,7 @@
+# actionlint ships an outdated description of actions/create-github-app-token@v3, which has replaced
+# `app-id` with `client-id`.
+paths:
+  .github/workflows/dependency-update.yml:
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
