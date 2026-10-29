@@ -2,11 +2,18 @@ name: 'Dependency update'
 
 on:
   workflow_call:
+    secrets:
+      app-client-id:
+        description: 'Client ID of the GitHub App that opens the pull request.'
+        required: true
+      app-private-key:
+        description: 'Private key of the GitHub App.'
+        required: true
     inputs:
       mode:
         description: >-
-          `nightly` updates the production dependencies within their constraints, to merge automatically.
-          `review` gathers what needs a human review.
+          `nightly` updates the production dependencies within their constraints and patches the vulnerable
+          ones, dev included, to merge automatically. `review` gathers what needs a human review.
         required: true
         type: string
       php-version:
@@ -29,11 +36,11 @@ on:
         required: false
         type: string
         default: 'main'
-      ci-workflow:
-        description: 'Workflow file dispatched on the branch to run the CI.'
+      assignees:
+        description: 'Comma-separated logins assigned to the pull request, who get notified about it.'
         required: false
         type: string
-        default: 'ci.yml'
+        default: ''
       working-directory:
         description: 'Directory holding composer.json.'
         required: false
@@ -44,10 +51,9 @@ on:
         type: string
         default: 'ubuntu-latest'
 
+# The pull request is opened with the GitHub App token, not with this one.
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+  contents: read
 
 jobs:
   update:
@@ -55,10 +61,22 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
 
     steps:
+      # A push made with the GITHUB_TOKEN triggers no workflow and leaves the pull_request runs waiting for an
+      # approval: the branch has to be pushed by a GitHub App for the CI to run on it.
+      - name: 'Generate a GitHub App token'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: 'Checkout repository'
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.base-branch }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: 'Setup PHP and install dependencies'
         uses: IQ2i/.github/actions/setup-php@main
@@ -74,6 +92,6 @@ jobs:
           mode: ${{ inputs.mode }}
           branch: ${{ inputs.branch }}
           base-branch: ${{ inputs.base-branch }}
-          ci-workflow: ${{ inputs.ci-workflow }}
+          assignees: ${{ inputs.assignees }}
           working-directory: ${{ inputs.working-directory }}
-          github-token: ${{ github.token }}
+          github-token: ${{ steps.app-token.outputs.token }}
